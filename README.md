@@ -1,250 +1,259 @@
-# opencode 多 Agents 设计 — 按需调度的轻量骨架
+# OPENCODE 多 Agent 工作流 · 合约工程化版
 
-> 面向**代码修复**类长任务的 opencode 多 agent 方案。
-> 设计哲学：**按需调度的迭代循环** + **极简调度骨架** + **四项工程纪律** + **文件持久化规划**。
-
----
-
-## 1. 设计目标
-
-| 维度 | 取舍 |
-|---|---|
-| **范围** | 代码修复 / 重构 / 多步骤实现类任务 |
-| **轻量** | 5 个 agent，无固定流水线，按需触发 |
-| **高分** | 重 Explore（AST 图谱）+ Verify（test-driven loop）+ 文件持久化规划 |
-| **不做** | 独立 plan agent、reviewer、doc-writer（不计分） |
-
-### 推翻的旧设计
-
-旧 `consult_agents/multi-build` 是 **planner→coder→reviewer→doc-writer 固定四阶段流水线**。本设计**完全推翻**——固定流水线按预定顺序前进，信息不足也要跑完全流程；本设计采用**按信息状态切换阶段的迭代循环**：探索未满足就多探索，验证未通过就回 implement，不按预定顺序。
+> 本目录是 OPENCODE fork 的 **多 agent 编排系统**。采用合约式接口 + 确定性路由 + 可重放执行 + 强隔离的工程化重构。
+>
+> **⚠️ 适用范围**：本系统 **仅服务代码工作流**——读代码、改代码、跑测试、装配 patch。**不处理**文档翻译、客服问答、PPT/Excel 生成、通用聊天等非代码任务；收到此类请求时 main 直接拒绝并向用户说明。
 
 ---
 
-## 2. 5-Agent 骨架
+## 一、系统拓扑
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    main (primary)                    │
-│   主控 · 文件规划 · 子 agent 调度                    │
-└────────┬───────────┬────────────┬──────────┬─────────┘
-         │           │            │          │
-    @explore    @implement    @verify   @patcher
-    (read-only)  (edit)      (test)     (final patch)
+                         ┌──────────┐
+                         │   USER   │
+                         └────┬─────┘
+                              │ user_intent
+                              ▼
+                       ┌──────────────┐
+                       │   main 🎯    │  ← 唯一入口/编排者/决策者/checkpoint 中枢
+                       │  (primary)   │
+                       └──┬──┬──┬──┬──┘
+                          │  │  │  │
+            ┌─────────────┘  │  │  └─────────────┐
+            ▼                ▼  ▼                ▼
+       ┌─────────┐    ┌──────────┐    ┌────────┐    ┌─────────┐
+       │ explore │ →  │implement │ →  │ verify │ →  │ patcher │
+       │ (read)  │    │ (write)  │    │ (test) │    │(deliver)│
+       └─────────┘    └──────────┘    └────────┘    └─────────┘
+            │              │               │              │
+            └──────────────┴───────────────┴──────────────┘
+                              │
+                              ▼ output_variables（结构化字段）
+                       ┌─────────────────┐
+                       │  .task_state/   │  ← 持久治理层
+                       │  task_plan.md   │
+                       │  findings.md    │
+                       │  progress.md    │
+                       └─────────────────┘
+                              │
+                              ▼
+                       ┌─────────────────┐
+                       │   mempalace     │  ← 跨任务记忆
+                       │  wing_<task>/   │
+                       │  decisions      │
+                       │  pitfalls       │
+                       └─────────────────┘
 ```
 
-### 调度图（迭代循环）
+---
 
-```
-    ┌─────────────────────────────────┐
-    │            main                 │
-    │  Observe → Plan → Act → Verify  │
-    │     ↑                       │   │
-    │     └───────────────────────┘   │
-    └─────────────────────────────────┘
-        │       │        │       │
-        ▼       ▼        ▼       ▼
-     explore implement verify patcher
-       (信息) (变更)   (验证)  (交付)
-```
+## 二、五 agent 角色一览
 
-### 边界与触发
-
-| Agent | 模式 | 何时调度 | 输入 | 输出 |
+| Agent | mode | 职责 | 写权限 | 关键工具 |
 |---|---|---|---|---|
-| **main** | primary | 默认主控（用户通过 Tab 进入） | 任务 | 全过程产物 |
-| **explore** | subagent | 不熟悉代码 / 全局检索 / AST 关系 | 模糊问题 | 候选符号 + 调用图 |
-| **implement** | subagent | 方案明确，需精确编辑 | work spec | 工作树变更 + 自验报告 |
-| **verify** | subagent | 任何代码修改后 | 测试范围 | PASS/FAIL + root cause |
-| **patcher** | subagent | 准备最终交付 | 工作树状态 | 干净 patch + 全量测试报告 |
+| **main** | primary | 编排 / 决策 / checkpoint | task_plan.md / progress.md / mempalace | 调度 sub-agent + gitnexus + compress |
+| **explore** | subagent | 只读侦察，找符号 / 调用关系 | ❌ 零写入 | gitnexus_query/_context/_impact + grep + glob |
+| **implement** | subagent | 按 spec 落地代码 | edit / write | read + edit + gitnexus_impact + lint/typecheck |
+| **verify** | subagent | 跑测试，PASS/FAIL/BLOCKED 三态 | ❌ 规划文件零写入 | bash(test) + gitnexus_detect_changes |
+| **patcher** | subagent | 清理残留 + 全量测试 + 装配 patch | edit(清理) / 删 `.task_state/` | bash + git + 全量测试 |
 
 ---
 
-## 3. 工具调用时机
+## 三、职责 × 权限 × 越权路由（核心契约）
 
-### gitnexus（AST 知识图谱）
+### 3.1 一表看清谁能做什么
+| Agent | 任务域 | 写权限 | 可越权操作 | 越权处置 |
+|---|---|---|---|---|
+| **main** | 编排 / 决策 / checkpoint / 装配交付 | task_plan.md / progress.md / mempalace | — | （编排者本身无上层）拒绝非代码任务 |
+| **explore** | 只读代码侦察 | ❌ 任何写入 | 写文件、调用 webfetch、跑测试 | `BLOCKED_NEED_ESCALATION` 返回 main |
+| **implement** | 按 spec 落地代码 | edit / write（仅 spec.targets 内） | 写 spec 外的文件、跑全量测试、提交 git | `BLOCKED_NEED_ESCALATION` 返回 main |
+| **verify** | 跑测试 / 诊断 | ❌ 规划文件零写入 | 改代码、装配 patch、提交 git | `BLOCKED_NEED_ESCALATION` 返回 main |
+| **patcher** | 清理残留 + 全量测试 + 装配 patch | edit（仅清理）/ 删 `.task_state/` | 改业务代码、改 verify 结论 | `BLOCKED_NEED_ESCALATION` 返回 main |
 
-| 工具 | 主用 agent | 何时用 |
+### 3.2 两类阻塞码（sub-agent 越权时必须返回）
+| 阻塞码 | 触发情形 | 必返字段 |
 |---|---|---|
-| `gitnexus_query` | explore | 模糊问题找执行流 |
-| `gitnexus_context` | explore | 已知符号名查 360 度引用 |
-| `gitnexus_cypher` | explore | 复杂结构查询 |
-| `gitnexus_impact` | implement | **改前必跑** — 评估爆炸半径 |
-| `gitnexus_route_map` / `api_impact` | explore | API 路由相关任务 |
-| `gitnexus_detect_changes` | verify | 失败诊断时映射变更到 process |
-| `gitnexus_rename` | implement | 多文件协调重命名 |
+| `BLOCKED_NEED_ESCALATION` | 需要超出 frontmatter 权限的工具/操作 | reason / required_capability / suggested_owner |
+| `BLOCKED_OUT_OF_SCOPE` | 收到非代码工作流任务（文档翻译、客服、通用问答、PPT/Excel 生成等） | reason / detected_intent |
 
-### mempalace（持久记忆）
+### 3.3 main 收到阻塞的三选一（自动判断）
+1. **拒绝**：任务本身越界（`BLOCKED_OUT_OF_SCOPE`）→ 向用户回复「本系统仅服务代码工作流」并终止。
+2. **代执行**：动作合理但归属错位（如 explore 想 webfetch）→ main 自己执行后把结果落 findings.md，再让 sub-agent 继续。
+3. **改派**：动作合理且应换执行者（如 verify 发现还需补代码）→ 改派给正确的 sub-agent，保留已完成上下文。
 
-**只在 main agent 中读写**。subagent 不写记忆，避免污染。
+**判断优先级**：是否在代码工作流域 → 否则拒绝；是否 main 可代办 → 是则代执行；否则改派。
 
-| 操作 | 时机 |
+**铁律**：sub-agent **不得自行变通绕过权限**，发现越界必须 return BLOCKED；main **不得**把 BLOCKED 直接抛回用户（除非任务本身确需用户澄清）。
+
+详见 `main.md §2.5`、各 sub-agent §4.2「边界场景」。
+
+---
+
+## 四、工程化范式 → 本系统映射
+
+| 工程化概念 | 本系统落地 | 文件锚 |
+|---|---|---|
+| Worker Agent 6 元组（Name+Desc+Instructions+Inputs+Outputs+MCP+Env） | agent.md frontmatter + 第 1 层「角色契约」 | 每个 agent.md |
+| Inputs Schema | sub-agent 文档的 `Input Schema` 表 | explore/implement/verify/patcher §1.2 |
+| Output Variables（KEY=value） | Output Schema 中的 `output_variables` 段 | explore/implement/verify/patcher §1.3 |
+| MCP Connectors / Tool Whitelist | 第 1 层「权限矩阵」表 | 每个 agent §1.4 |
+| max_turns | sub-agent 边界场景中的"过量收敛/失败次数上限" | 各 agent 第 4 层 |
+| Trigger Context Injection | main 调度时把上下文打包进 spec | main §2.2 路由表 |
+| Output Variable Gate（VALIDATION_STATUS） | verify 的 PASS/FAIL/BLOCKED 三态 | verify §1.3 |
+| Auto-Compaction | 上下文压缩 (compress) 触发规则 | main §3.4 |
+| Persistent Memory（MEMORY.md） | mempalace 写入时机 | main §3.5 |
+| Checkpoint Log | progress.md 关键事件 checkpoint | main §3.3 |
+| Pre/PostToolUse Hooks | goal-driven-planning skill 的自动注入 | skill 文档 |
+
+**未引入的外部范式概念**（避免过度工程化）：
+- Pipeline / Stage / Trigger 表达式 — 本系统不是 CI/CD，main 自己就是 orchestrator
+- agent versioning + marketplace — 单仓库 git 已经是版本管理
+- container 隔离 — opencode sub-agent 已经是独立 session
+
+---
+
+## 五、Schema 闭环一致性
+
+agent 间通过 **output_variables → 下游 Input Schema** 形成闭环。任一环断裂即拒绝下一阶段。
+
+```
+explore.output_variables.targets
+   │
+   ▼ main 转交
+implement.Input.targets         ✅ 1:1 引用
+implement.output_variables.changed_files + test_target
+   │
+   ▼ main 转交
+verify.Input.changed_files + test_target   ✅ 涵盖
+verify.output_variables.status (PASS|FAIL|BLOCKED)
+   │
+   ▼ main 转交（仅 PASS 时）
+patcher.Input.precondition.verify_status == PASS   ✅ 强检
+patcher.output_variables.status (READY|BLOCKED)
+   │
+   ▼ main 交付
+user 收到 deliverable + checkpoint_log
+```
+
+**断裂处置**：
+- explore 没给 targets → implement 回绝
+- implement 没给 changed_files → verify 回绝
+- verify 不是 PASS → patcher 回绝
+- patcher 不是 READY → main 不交付，回流 verify/implement
+
+---
+
+## 六、checkpoint schema（progress.md 关键事件格式）
+
+progress.md 是临时关键事件 checkpoint，不覆盖所有动作。仅 main 写入；sub-agent 只在触发关键事件时返回 `checkpoint_hint`，由 main 判断是否落盘。
+
+```
+| time | agent | phase | action | tool | input_ref | output_ref | result | decision_ref |
+```
+
+| 字段 | 说明 |
 |---|---|
-| `mempalace_search` | main 接到任务时查历史决策 / explore 开工前查相关 wing |
-| `mempalace_add_drawer` | main 完成里程碑（room=decisions）/ 踩坑时（room=pitfalls）|
-| `mempalace_kg_*` | main 在多 session 间维护实体关系（可选） |
+| time | ISO8601（精确到分） |
+| agent | main / explore / implement / verify / patcher |
+| phase | Observe / Plan / Act / Verify / Reflect / Cleanup |
+| action | 一句话关键事件描述 |
+| tool | 工具名（多个用 `+` 连接）；纯思考写 `-` |
+| input_ref | 输入引用（如 `findings.md#L42`、`Foo.bar@src/foo.py:42`），不复制原文 |
+| output_ref | 输出引用 |
+| result | ok / partial / fail / blocked |
+| decision_ref | 关联 D-NNN（决策） / E-NNN（错误台账）；无关联写 `-` |
 
-### opencode 内置
+必须记录：verify PASS/FAIL/BLOCKED；FAIL/BLOCKED 根因与回流方向；重大计划变更/范围扩大/用户确认；同一错误第三次；patcher 最终装配和全量测试摘要；跨 `/clear` 恢复所需 checkpoint。
 
-- `task` — main 调度子 agent 的唯一通道
-- `read/edit/write` — 受 permission 约束
-- `bash` — verify/patcher 限定测试相关命令
-- `lsp` — implement 改后类型/语法检查
-- `skill` — main 启动任务时加载 `goal-driven-planning`（见 §4）
+禁止记录：成功 explore 返回、成功 implement 返回、普通工具调用、hook 提醒、纯状态推进、已在 findings.md 或 changed_files 可追溯的内容。
 
----
-
-## 4. 文件规划层（goal-driven-planning skill）
-
-**核心命题**：上下文窗口是易失内存，文件系统是持久磁盘。任何重要内容必须落盘。
-
-`agents/skills/goal-driven-planning/` 提供：
-- 三文件协作：`task_plan.md`（目标/阶段/决策/错误）、`findings.md`（探索结果/外部内容隔离区）、`progress.md`（会话日志/测试结果）
-- 四协议：决策前重读 / 两步落盘 / 三次失败协议 / 五问重启
-- **hooks 自动注入**（opencode hooks 系统）：
-  - `UserPromptSubmit` — 检测活跃 task_plan 提示读取
-  - `PreToolUse` — 每次工具调用前注入 task_plan.md 头部
-  - `PostToolUse(Write|Edit)` — 提示更新 progress
-  - `Stop` — 会话结束盘点未完成阶段
-
-**子 agent 协作模式**：
-
-| sub-agent | 是否能写规划文件 | 协作模式 |
-|---|---|---|
-| explore（read-only） | ❌ | 返回结构化报告 → main 落盘到 `findings.md` |
-| verify（read-only） | ❌ | 返回 PASS/FAIL → main 落盘到 `progress.md` 与错误台账 |
-| implement（edit allow） | ✅ progress / findings | 完成 WP 后追加；新发现追加 findings |
-| patcher（edit allow） | ✅ progress（装配段） | **不写 task_plan**；最终阶段必须清理整个 `.task_state/` |
-
-`task_plan.md` **只 main 写**。决策权与目标定义不外放。
+checkpoint 随 `.task_state/` 一起被 patcher 清理；写入意义是被 main 实时消费做决策回流，不进 patch。
 
 ---
 
-## 5. 四项工程纪律映射
+## 七、启动流程速查
 
-四项纪律已在 opencode 系统级提示词中固化，各 agent 不复制全文，只在主战场显式锚点：
+### 用户给 main 一个任务后：
 
-| 纪律 | 主战场 | 落地形式 |
-|---|---|---|
-| **思考前置** | explore | 多种解释先列出，模糊 query 必须二次过滤 |
-| **简洁优先** | main / implement | 200→50 行重写自检；禁止过度抽象 |
-| **外科式修改** | implement / patcher | 每行变更可追溯；patch 装配最严 |
-| **目标驱动** | verify | 必须有客观 PASS/FAIL；无可跑测试 = 阻断 |
-
----
-
-## 6. 安装与使用
-
-### 项目级（推荐）
-
-```bash
-mkdir -p .opencode/agents .opencode/skills
-cp agents/*.md             .opencode/agents/
-cp -r agents/skills/*      .opencode/skills/
 ```
+1. main 复杂度自检（4 信号宽松判定）
+   ├─ 任一命中 → 走规划路径（建 .task_state/ + 加载 goal-driven-planning skill）
+   └─ 全不中  → 轻量路径（直接做但仍验证）
 
-### 全局
+2. 规划路径：
+   阶段 0  启动协议       建/恢复 .task_state/ + mempalace_search
+   阶段 1  Observe       调度 @explore，落 findings.md
+   阶段 2  Plan          列方案 / 跑 gitnexus_impact / 写决策 D-NNN
+   阶段 3  Act (循环)    @implement → @verify → 失败回流
+   阶段 4  Verify        嵌入阶段 3，强制三态结论
+   阶段 5  Reflect       @patcher 清理+全测+装配 → mempalace 写决策摘要
 
-```bash
-mkdir -p ~/.config/opencode/agents ~/.config/opencode/skills
-cp agents/*.md             ~/.config/opencode/agents/
-cp -r agents/skills/*      ~/.config/opencode/skills/
-```
-
-### 与内置 agent 共存
-
-opencode 自带 `build`（默认 primary）/ `plan` / `general` / `explore`。本套设计：
-
-- **覆盖**：内置 `explore` 会被本设计的 `explore.md` 覆盖（同名）
-- **新增**：`main` / `implement` / `verify` / `patcher` 都是新 agent
-- **保留**：内置 `build` 保留，用户可 Tab 在 `main` 和 `build` 间切换；如想强制用 main，在 `opencode.json` 中设置：
-
-  ```json
-  { "agent": { "build": { "disable": true } } }
-  ```
-
-### 使用方式
-
-启动 opencode 后默认进入 `build`（内置）。**Tab 切换到 `main`** 即激活本套调度 + 文件规划。
-
-或在 `opencode.json` 中把 main 设为默认入口：
-
-```json
-{ "agent": { "main": { "mode": "primary" } } }
+3. 每阶段切换前自答四问（main §3.2）：
+   - 假设是否显式？
+   - 200 行能压到 50 行吗？
+   - 每行变更可追溯任务需求？
+   - 成功是可跑测试还是"看起来对"？
 ```
 
 ---
 
-## 7. 模型选型策略（不写死）
+## 八、提交规范（Conventional Commits 中文版）
 
-frontmatter 中**未指定 model**，由用户在 `opencode.json` 中按预算与任务难度自配。
+格式：`<type>：(<scope>)<subject>`
 
-**分层原则**（按价值密度从高到低）：
+| 类型 | 说明 |
+|---|---|
+| `功能` | 新增功能 |
+| `修复` | 缺陷修复 |
+| `文档` | 文档变更 |
+| `样式` | 格式或静态检查类调整 |
+| `重构` | 不改变行为的代码重构 |
+| `测试` | 测试新增或重构 |
+| `维护` | 构建工具或依赖维护 |
+| `优化` | 性能改进 |
+| `运维` | CI/CD 与脚本变更 |
+| `回滚` | 撤销提交 |
 
-| 层 | 价值密度 | 配置建议 |
-|---|---|---|
-| `main` | 调度判断决定全局走向 | 选最强一档（推理 + 长上下文） |
-| `implement` | 代码生成质量直接决定 patch 成败 | 选最强一档（与 main 同档或更高） |
-| `explore` | 信息提取，可批量重复 | 选中等档（速度优先） |
-| `verify` | 客观判断 PASS/FAIL，结构化输出 | 选中等档 |
-| `patcher` | 装配 + 测试，需严格遵守清理铁律 | 选中等档以上 |
-
-**配置方式**：在 `opencode.json` 的 `agent.<name>.model` 显式指定。不指定时 sub-agent 继承 main 的模型。
-
-```json
-{
-  "agent": {
-    "main":      { "model": "<provider>/<top-tier-model>" },
-    "explore":   { "model": "<provider>/<mid-tier-model>" },
-    "implement": { "model": "<provider>/<top-tier-model>" },
-    "verify":    { "model": "<provider>/<mid-tier-model>" },
-    "patcher":   { "model": "<provider>/<mid-tier-model>" }
-  }
-}
-```
-
-> 不在 frontmatter 写死模型 = subagent 默认继承 main 的模型；显式配置 `opencode.json` 才会分层。
+- 破坏性变更可用 `!` 标识
+- 标题不超过 72 字符，正文每行不超过 200 字符
+- main **不主动提交**，由用户明确指令触发；patcher 装配 READY + 用户确认即可 commit
 
 ---
 
-## 8. 反模式自检
+## 九、文件索引
 
-部署前确认：
-
-- [ ] 没有把固定流水线塞回去（main 必须支持回流）
-- [ ] subagent 没有调度其他 subagent 的能力（只 main 调度）
-- [ ] verify 的 permission 中 edit/write 必须 deny
-- [ ] explore 的 permission 中 edit/write/任意 bash 必须 deny
-- [ ] implement 在 spec 之外不修改文件
-- [ ] patcher 把 `.task_state/`（含 task_plan/findings/progress）清干净，不进 patch
-- [ ] mempalace 只在 main 写入
-- [ ] 外部网页/搜索内容只写 findings.md，永远不进 task_plan.md
-
----
-
-## 9. 文件清单
-
-```
-agents/
-├── main.md                              # primary 主控
-├── explore.md                           # subagent 只读侦察
-├── implement.md                         # subagent 外科编辑
-├── verify.md                            # subagent 测试裁判
-├── patcher.md                           # subagent 交付装配
-├── README.md                            # 本文件
-└── skills/
-    └── goal-driven-planning/            # 文件规划 skill（含 hooks）
-        ├── SKILL.md                     # 协议、纪律、hooks 配置
-        └── templates/
-            ├── task_plan.md             # 目标 / 阶段 / 决策台账模板
-            ├── findings.md              # 探索 / 外部内容隔离区模板
-            └── progress.md              # 会话日志 / 测试结果模板
-```
+| 文件 | 内容 |
+|---|---|
+| `main.md` | 主控编排器（四层契约：角色 / 路由 / 协议 / checkpoint 反模式） |
+| `explore.md` | 只读侦察 sub-agent |
+| `implement.md` | 代码落地 sub-agent |
+| `verify.md` | 测试与诊断 sub-agent |
+| `patcher.md` | 装配交付 sub-agent |
+| `README.md` | 本文档 — 系统总览与工程化范式映射 |
+| `old_agents/` | 历史版本归档（已废弃，仅供回溯） |
 
 ---
 
-## 10. 后续可选增强（非本期范围）
+## 十、与外部组件的协作
 
-- **multi-repo 支持**：扩展 main 调度到 gitnexus 的 group mode（`@<groupName>`）
-- **自我进化**：让 main 在踩坑后自动写经验性 SKILL（需要明确权限边界）
-- **压缩策略**：长任务自动调用 `compress`，可在 main prompt 中加阈值规则
-- **失败案例回放**：把典型失败案例写入 mempalace `wing_pitfalls`，跨任务复用
+| 组件 | 关系 |
+|---|---|
+| **goal-driven-planning skill** | main 阶段 0 自检命中即加载，提供 .task_state/ 三模板与 hooks（自动推目标到上下文） |
+| **mempalace MCP** | 跨任务记忆。main 读历史决策、写本任务 decisions；sub-agent 只读不写 |
+| **gitnexus MCP** | AST 知识图谱。代码理解的首选工具，比 grep 收敛快 |
+| **上下文压缩 (compress)** | OpenCode 内置压缩工具。main 在阶段闭合时主动调用 |
+| **opencode TodoWrite** | 实时动作队列。每个 agent 各有独立队列，main 这条是全任务主线 |
+
+---
+
+## 十一、版本与维护
+
+- **当前版本**：v2.0.0（合约工程化重构，2026-05-13）
+- **上一版**：v1.x（散文式约定）见 `old_agents/`
+- **修改原则**：Schema 字段命名跨版本稳定；新增字段优先于改名；废弃字段保留 1 个 minor 版本
+
+修改任何 agent.md 时请同步：
+1. 检查 §五的闭环一致性是否破坏
+2. 更新 frontmatter 的 `version` + `last_review`
+3. 在本 README §九/十列出新增依赖
+4. 写一份 mempalace 决策摘要（`wing_harness-refactor/decisions`）
