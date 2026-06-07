@@ -20,15 +20,8 @@ opencode_agents/
 │   ├── review.md        # Code-quality gate (read-only, 7-dimension audit)
 │   └── patcher.md       # Final-mile assembly: cleanup, full-test, patch
 │
-└── SKILLS/              # Skills (on-demand playbooks loaded per task)
-    ├── goal-driven-planning/   # File-based planning for long, multi-step tasks
-    ├── agent-browser/          # Browser automation for agents
-    ├── docx/                   # Word document generation / editing
-    ├── pdf/                    # PDF reading / merging / filling
-    ├── pptx/                   # PowerPoint creation / editing
-    ├── xlsx/                   # Spreadsheet operations
-    ├── plugin-setup/           # Plugin + component installer
-    └── project-onboarding/     # Project-level plugin validation
+└── SKILLS/              # On-demand playbooks loaded per task
+    └── goal-driven-planning/   # File-based planning for long, multi-step code-repair tasks
 ```
 
 ## Architecture Overview
@@ -129,10 +122,8 @@ Skills are **on-demand playbooks** loaded only when a task matches their trigger
 | Skill | Purpose |
 |-------|---------|
 | **goal-driven-planning** | File-based planning for long, multi-step code-repair tasks. Decouples ephemeral context (TodoWrite queue) from persistent state (`.task_state/*.md`). Hooks in 4 touchpoints (UserPromptSubmit / PreToolUse / PostToolUse / Stop) push goals back into context. |
-| **plugin-setup** | Installs plugins (hindsight / codegraph) + components (tmux wrapper / DCP / MCP) + agents + skills, with self-check. |
-| **project-onboarding** | Validates Hindsight memory connectivity + builds codegraph index for a project. |
-| **agent-browser** | Browser automation for agents (navigation, forms, screenshot, scraping). |
-| **docx / pdf / pptx / xlsx** | Document-generation skills (Word / PDF / PowerPoint / Excel). |
+
+> Additional skills (plugin-setup, project-onboarding, document-generation, browser automation) live in the upstream orchestration repository and are installed separately.
 
 ## Design Principles
 
@@ -155,7 +146,9 @@ Skills are **on-demand playbooks** loaded only when a task matches their trigger
 
 ## Installation
 
-The agents in `AGENTS/` and skills in `SKILLS/` are deployed by the **plugin-setup** skill (step 2 of the three-step pipeline) and validated per-project by **project-onboarding** (step 3). Refer to the upstream OPENCODE fork and its `AGENTS.md` for the full installation flow.
+The agents in `AGENTS/` are deployed by the **plugin-setup** skill (step 2 of the three-step pipeline) and validated per-project by **project-onboarding** (step 3). These skills live in the upstream orchestration repository — refer to its `AGENTS.md` for the full installation flow.
+
+Alternatively, copy the agent files from `AGENTS/` directly into your project's `.opencode/agents/` directory.
 
 ## License
 
