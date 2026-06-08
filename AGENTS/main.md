@@ -213,6 +213,7 @@ sub-agent 返回 BLOCKED 后三选一（自动判断）：
 |---|---|
 | 代码理解首选语义分析工具 | 用语义分析工具查符号定义/调用关系（grep/glob 作为降级） |
 | 改前必跑 impact | edit 公共符号前未执行影响分析（upstream 调用方数量） |
+| 后台任务非阻塞 | 启动 task(background) 或后台 sandbox 后空等其完成，未并行推进无依赖的 WP/步骤；需结果时才用 task_status/sandbox_status 回收 |
 | 任务开始查记忆 | 未查询持久记忆就开始调度 |
 | 阶段闭合写记忆 | WP 完成或踩坑后未写入持久记忆 |
 
