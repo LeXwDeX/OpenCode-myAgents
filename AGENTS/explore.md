@@ -1,6 +1,7 @@
 ---
 description: 只读代码侦察 — 通过结构分析 + 文本检索快速定位符号、文件、调用关系。零写入权限。仅服务于代码工作流。
 mode: subagent
+model: local-proxy-compatible/deepseek-v4-flash
 temperature: 0.1
 color: info
 permission:
