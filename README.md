@@ -9,10 +9,12 @@
 ## Repository Layout
 
 ```
-opencode_agents/
+opencode-agents/
 ├── README.md            # This file
-├── AGENTS/              # Agent definitions (7 sub-agents orchestrated by main)
+│
+├── AGENTS/              # Agent definitions (8 agents orchestrated by main)
 │   ├── main.md          # Primary orchestrator
+│   ├── architect.md     # User-invoked architecture initialization + drift diagnosis
 │   ├── archgate.md      # Architecture gate — read-only spec validator
 │   ├── explore.md       # Read-only code reconnaissance
 │   ├── implement.md     # Minimal-trauma code editing with enforced TDD
@@ -21,8 +23,20 @@ opencode_agents/
 │   └── patcher.md       # Final-mile assembly: cleanup, full-test, patch
 │
 └── SKILLS/              # On-demand playbooks loaded per task
-    └── goal-driven-planning/   # File-based planning for long, multi-step code-repair tasks
+    ├── goal-driven-planning/   # File-based planning for long, multi-step code-repair tasks
+    └── ahe/                    # AHE methodology — evidence-driven prompt optimization
 ```
+
+## Agent Invocation Model
+
+Agents fall into two invocation categories:
+
+| Category | Agents | Trigger |
+|---|---|---|
+| **main-dispatched** | archgate, explore, implement, verify, review, patcher | `main` dispatches via sub-agent routing |
+| **user-invoked** | architect | User invokes via `@architect`; other agents never dispatch it |
+
+---
 
 ## Architecture Overview
 
@@ -30,7 +44,7 @@ opencode_agents/
                          ┌──────────┐
                          │   USER   │
                          └────┬─────┘
-                              │ user_intent
+                              │ user_intent / @architect
                               ▼
                        ┌──────────────┐
                        │   main 🎯    │  ← sole entry point, router, decision-maker
@@ -63,6 +77,12 @@ opencode_agents/
                        ┌─────────────────┐
                        │   review        │  ← code-quality gate (read-only)
                        └─────────────────┘
+
+       ┌──────────────┐
+       │  architect   │  ← user-invoked only (never dispatched by main)
+       │  (read+write │    Produces / audits project AGENTS.md
+       │   AGENTS.md) │    confidence-marked constraint source
+       └──────────────┘
 ```
 
 ## Agents (`AGENTS/`)
@@ -70,30 +90,59 @@ opencode_agents/
 | Agent | Mode | Role | Contract |
 |-------|------|------|----------|
 | **main** | primary | Orchestrator — sole entry, routes tasks, owns decisions | Schedules sub-agents, manages `.task_state/`, enforces gate transitions |
-| **archgate** | subagent (read-only) | Architecture validator — checks spec vs. architecture rules (docs + ground-truth code) | 4-state verdict: `PASS` / `BLOCKING` / `BLOCKED` / `NEEDS_DESIGN` |
+| **architect** | subagent (user-invoked) | Architecture initialization + drift diagnosis | Macro-scans codebase, generates/audits project AGENTS.md with confidence markers; 4 outcomes: `COMPLETED` / `NEEDS_USER_DECISION` / `PASS` / `DRIFT_DETECTED` |
+| **archgate** | subagent (read-only) | Architecture validator — checks spec vs. architecture rules (AGENTS.md + docs + ground-truth code) | 4-state verdict: `PASS` / `BLOCKING` / `BLOCKED` / `NEEDS_DESIGN` |
 | **implement** | subagent (write) | Minimal-trauma code editor — enforced TDD (interface → test → impl) | Runs impact analysis pre-edit, lint/typecheck post-edit, never runs tests |
 | **verify** | subagent (read-only) | Test runner + failure diagnosis | 3-state verdict: `PASS` / `FAIL` / `BLOCKED` with root-cause per test |
 | **review** | subagent (read-only) | Code-quality audit — 7-dimension hard-constraint checklist | 2-state verdict: `PASS` / `BLOCKING` (any P0/P1 → forced BLOCKING) |
 | **patcher** | subagent (write, limited) | Final-mile assembly — cleanup, full-test, produce clean `git apply` patch | 2-state verdict: `READY` / `BLOCKED`; never writes business logic |
 | **explore** | subagent (read-only) | Code reconnaissance — locate symbols, call graphs, impact surfaces | Returns structured `output_variables` for downstream `implement` |
 
+### AGENTS.md Awareness
+
+`architect` produces a project-level `AGENTS.md` containing architecture constraints (module inventory, interface boundaries, design pattern, iron laws) with three confidence levels:
+
+| Marker | archgate enforcement |
+|---|---|
+| `[CONFIRMED]` | Full BLOCKING authority |
+| `[INFERRED]` | Requires corroborating second evidence source |
+| `[ASSUMED·需确认]` | INFO only, never produces BLOCKING |
+
+Other agents treat `AGENTS.md` as optional evidence: used if present, foundation code used as fallback if absent. `AGENTS.md` absence alone does **not** trigger `NEEDS_DESIGN` or block archgate.
+
 ### Common Conventions
 
 - **Structured `output_variables`** — Every sub-agent terminates with a machine-parseable `output_variables` block that feeds into the next step.
 - **Contract-first inputs** — Each agent declares required input fields; missing fields → immediate rejection, not guesswork.
 - **Gate transitions are explicit** — `main` enforces the state machine; no sub-agent may skip a gate.
-- **Three-strike escalation** — Looped failures on the same WP escalate to the user (defined in `main.md` §纠错规则).
+- **Three-strike escalation** — Looped failures on the same WP escalate to the user (defined in `main.md` §错误纠正规则).
+
+### Architect Legacy Code Handling
+
+When architect detects a codebase with no consistent architecture (≥2 legacy signals), it presents 4 user-decision options:
+
+| Option | Effect |
+|---|---|
+| **Document as-is** | Write AGENTS.md reflecting actual code state; treat current structure as normative |
+| **Deep scan** | Expand exploration depth; may discover hidden architecture intent |
+| **Redesign architecture** | User provides target architecture; subsequent work proceeds in migration mode |
+| **Progressive improvement** | Dual-layer AGENTS.md (§current reflects code, §target marks improvement goals) |
+
+---
 
 ## Workflow Pipeline
 
 ```
 user_intent
     │
-    ▼
-main: complexity self-check → light path OR planning path
+    ├── @architect (optional, user-invoked)
+    │   └─ produces/audits project AGENTS.md
     │
     ▼
-[archgate] code_spec validation
+main: complexity self-check → lightweight path OR heavy planning path
+    │
+    ▼
+[archgate] code_spec validation (uses AGENTS.md if present, falls back to foundation code)
     │─ BLOCKING → main re-spec
     │─ NEEDS_DESIGN → main writes constraints → re-submit
     │─ PASS ▼
@@ -122,6 +171,7 @@ Skills are **on-demand playbooks** loaded only when a task matches their trigger
 | Skill | Purpose |
 |-------|---------|
 | **goal-driven-planning** | File-based planning for long, multi-step code-repair tasks. Decouples ephemeral context (TodoWrite queue) from persistent state (`.task_state/*.md`). Hooks in 4 touchpoints (UserPromptSubmit / PreToolUse / PostToolUse / Stop) push goals back into context. |
+| **ahe** | AHE (Agentic Harness Engineering) methodology — systematic optimization of agent text components: system prompts, sub-agents, tool descriptions, skills, memory, and correction rules. Core principles: remove behavioral guidance, retain hard constraints; evidence-driven; correct component layer; falsifiable predictions. |
 
 > Additional skills (plugin-setup, project-onboarding, document-generation, browser automation) live in the upstream orchestration repository and are installed separately.
 
@@ -132,17 +182,20 @@ Skills are **on-demand playbooks** loaded only when a task matches their trigger
 3. **Strong isolation** — Each Work Package is isolated in its own git worktree; cross-WP contamination is forbidden.
 4. **Replayable** — `.task_state/` files (task_plan / findings / progress) hold the entire decision log; `/clear` or crash restarts from the same checkpoint.
 5. **Self-healing fallback** — Global fallback + node-level fallback + shadow session; intermediate reasoning never pollutes `main`'s context.
+6. **Architecture-aware** — `architect` (user-invoked) establishes architecture constraints in `AGENTS.md`; `archgate` enforces them during code workflow. Constraints carry confidence markers; AGENTS.md is optional evidence, not a hard prerequisite.
 
 ## Conventions Enforced by Agents
 
 | Convention | Where |
 |------------|-------|
-| TDD triplet (interface → test → impl) | `implement.md` §TDD 三阶段 |
-| 3-strike escalation on looped failures | `main.md` §纠错规则 + `goal-driven-planning/SKILL.md` §5.3 |
-| Read-only gates never edit code | `archgate.md`, `verify.md`, `review.md`, `explore.md` |
-| `output_variables` is machine-parseable | Every agent's §输出 Schema |
-| `.task_state/` never enters the patch | `patcher.md` §强制条款 |
-| Architecture constraints live in code + docs | `archgate.md` (dual-source evidence) |
+| TDD triplet (interface → test → impl) | `implement.md` §Heavy TDD Three-Phase |
+| 3-strike escalation on looped failures | `main.md` §Error Correction Rules + `goal-driven-planning/SKILL.md` §5.3 |
+| Read-only gates never edit code | `archgate.md`, `verify.md`, `review.md`, `explore.md`, `architect.md` |
+| `output_variables` is machine-parseable | Every agent's §Output Schema |
+| `.task_state/` never enters the patch | `patcher.md` §Mandatory Clauses |
+| Architecture constraints live in AGENTS.md + docs + foundation code | `archgate.md` (tri-source evidence) |
+| Confidence markers on every AGENTS.md constraint | `architect.md` §3.2 Confidence Markers |
+| Domain-neutral terminology | `architect.md` §Core Discipline |
 
 ## Installation
 
