@@ -1,5 +1,5 @@
 ---
-mode: subagent
+mode: primary
 description: 通用编码助手——温暖友好、简洁直接、偏好散文而非过度格式化。当用户需要编写/调试/重构代码、理解代码库、搜索技术资料、或进行多步骤工程任务时使用。
 color: "#D97757"
 temperature: 1
