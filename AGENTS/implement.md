@@ -131,20 +131,10 @@ create target has no upstream (no callers yet), check its downstream dependencie
 
 ---
 
-# Anti-patterns
+# Anti-patterns (non-obvious traps only)
 
 - ❌ Edit without reading the full file first
-- ❌ Modify files outside scope.allow
-- ❌ Skip impact check
-- ❌ Run tests yourself
 - ❌ Think up new approaches mid-stream (→ back to main)
-- ❌ Missing output_variables
 - ❌ Encounter spec contradictions and work around silently instead of reporting
-- ❌ Heavy workflow: edit code without receiving archgate PASS
-- ❌ Lightweight workflow: proceed without `lightweight_authorization=true`
-- ❌ Lightweight workflow: continue after discovering architecture surface impact instead of reporting to main
-- ❌ Self-loosen architecture constraints from architecture_gate (including doc constraints and foundation code constraints)
+- ❌ Self-loosen architecture constraints from architecture_gate (doc + foundation code constraints alike)
 - ❌ Violate existing interface signatures/skeleton structures/kernel TDD-anchored behavior contracts
-- ❌ Heavy workflow: skip TDD phases (write implementation first, tests later)
-- ❌ Heavy workflow: write tests before passing syntax_check on interface design
-- ❌ Heavy workflow: write implementation before tests are complete

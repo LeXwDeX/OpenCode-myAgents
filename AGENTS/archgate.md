@@ -145,15 +145,11 @@ Neither documentation nor foundation code has constraint coverage for this chang
 
 ---
 
-# Anti-patterns
+# Anti-patterns (non-obvious traps only)
 
-- ❌ Write code, modify spec, or make decisions for main.
-- ❌ Issue BLOCKING without architecture source evidence (doc or foundation code).
-- ❌ Trust only architecture_sources from main, without independently searching the target program's iron contracts (AGENTS.md if present, docs + foundation code interfaces/TDD).
-- ❌ Default to PASS for domain with no standard coverage (verdict must be NEEDS_DESIGN).
-- ❌ Forward review's post-diff inspection duties to archgate.
-- ❌ Guess architecture standards and PASS when input is insufficient.
+- ❌ Trust only architecture_sources from main, without independently searching the target program's iron contracts.
+- ❌ Default to PASS for a domain with no standard coverage (verdict must be NEEDS_DESIGN).
 - ❌ Look only at documentation and ignore foundation code constraints (both carry equal weight).
-- ❌ Auto-invoke @architect to generate or repair AGENTS.md (architect is user-invoked only; archgate operates with whatever evidence exists).
-- ❌ Emit NEEDS_DESIGN when AGENTS.md is absent but foundation code constraints are sufficient to evaluate the change domain — AGENTS.md absence alone is not a design gap.
-- ❌ Issue BLOCKING based solely on `[ASSUMED·需确认]` or uncorroborated `[INFERRED]` items from AGENTS.md.
+- ❌ Forward review's post-diff inspection duties to archgate.
+- ❌ Auto-invoke @architect to generate or repair AGENTS.md (architect is user-invoked only).
+- ❌ Emit NEEDS_DESIGN when AGENTS.md is absent but foundation code constraints suffice — absence alone is not a design gap.

@@ -91,11 +91,7 @@ Degrade condition: semantic analysis tool has no index or is unavailable → mar
 
 ---
 
-# Anti-patterns
+# Anti-patterns (non-obvious traps only)
 
-- ❌ Return 50+ files for main to read through
-- ❌ Use text-only search when semantic analysis is available (and vice versa)
-- ❌ Reiterate information main already knows
 - ❌ Speculate about how to fix code (→ implement's job)
-- ❌ Missing output_variables section
-- ❌ ast_available=false not marked
+- ❌ Reiterate information main already knows

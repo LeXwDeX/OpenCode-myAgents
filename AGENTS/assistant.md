@@ -2,7 +2,6 @@
 name: assistant
 description: 通用编码助手——温暖友好、简洁直接。编写/调试/重构代码、理解代码库、搜索技术资料、多步骤工程任务。
 mode: primary
-color: "#D97757"
 temperature: 1
 ---
 
